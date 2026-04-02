@@ -1,0 +1,64 @@
+# default.yaml — Hyperparameters for surgical workflow analysis
+
+data:
+  data_dir: "data/cholec80"
+  features_dir: "data/features"
+  num_phases: 7
+  num_tools: 7
+  fps: 1
+  frame_size: 224
+  train_videos: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+  val_videos: [33, 34, 35, 36, 37, 38, 39, 40]
+  test_videos: [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+                57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
+                73, 74, 75, 76, 77, 78, 79, 80]
+  phase_names:
+    - "Preparation"
+    - "Calot Triangle Dissection"
+    - "Clipping and Cutting"
+    - "Gallbladder Dissection"
+    - "Gallbladder Packaging"
+    - "Cleaning and Coagulation"
+    - "Gallbladder Retraction"
+  tool_names:
+    - "Grasper"
+    - "Bipolar"
+    - "Hook"
+    - "Scissors"
+    - "Clipper"
+    - "Irrigator"
+    - "SpecimenBag"
+
+model:
+  backbone: "resnet50"
+  feature_dim: 2048
+  hidden_dim: 512
+  dropout: 0.3
+  lstm_layers: 2
+  lstm_bidirectional: true
+  tcn_stages: 4
+  tcn_layers_per_stage: 10
+  tcn_channels: 64
+
+training:
+  batch_size: 1
+  num_epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  grad_clip_max_norm: 5.0
+  scheduler_T0: 10
+  early_stopping_patience: 15
+  lambda_phase: 1.0
+  lambda_tool: 1.0
+  lambda_corr: 0.5
+  seed: 42
+
+augmentation:
+  horizontal_flip: true
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+  color_jitter_saturation: 0.2
+  rotation_degrees: 10
+  gaussian_blur_kernel: 5
+  gaussian_blur_sigma: [0.1, 2.0]
