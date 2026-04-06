@@ -27,6 +27,24 @@ PHASE_NAMES = [
     "Gallbladder Retraction",
 ]
 
+# Cholec80 annotation files use compact names without spaces.
+# Map both compact and spaced variants to phase indices.
+PHASE_NAME_TO_IDX = {
+    "Preparation": 0,
+    "CalotTriangleDissection": 1,
+    "Calot Triangle Dissection": 1,
+    "ClippingCutting": 2,
+    "Clipping and Cutting": 2,
+    "GallbladderDissection": 3,
+    "Gallbladder Dissection": 3,
+    "GallbladderPackaging": 4,
+    "Gallbladder Packaging": 4,
+    "CleaningCoagulation": 5,
+    "Cleaning and Coagulation": 5,
+    "GallbladderRetraction": 6,
+    "Gallbladder Retraction": 6,
+}
+
 TOOL_NAMES = [
     "Grasper",
     "Bipolar",
@@ -41,8 +59,13 @@ TOOL_NAMES = [
 def parse_phase_annotations(annotation_path):
     """Parse a Cholec80 phase annotation file.
 
-    Each line in the file has the format: '<frame_number>\\t<phase_label>'
-    The first line is a header and is skipped.
+    Supports two annotation formats:
+    - Integer indices: ``'<frame_number>\\t<phase_index>'``
+    - Text names: ``'<frame_number>\\t<PhaseName>'`` (e.g. ``CalotTriangleDissection``)
+
+    The first line is a header and is skipped. Frame numbers use the original
+    25-fps numbering (0, 1, 2, …), so callers that want 1-fps data should
+    filter to every 25th frame.
 
     Args:
         annotation_path (str): Path to the phase annotation .txt file.
@@ -51,7 +74,7 @@ def parse_phase_annotations(annotation_path):
         dict: Mapping from frame number (int) to phase index (int, 0-6).
 
     Example:
-        >>> phases = parse_phase_annotations("data/cholec80/video01-phase.txt")
+        >>> phases = parse_phase_annotations("data/phase_annotations/video01-phase.txt")
         >>> print(phases[0])
         0
     """
@@ -63,7 +86,11 @@ def parse_phase_annotations(annotation_path):
         parts = line.strip().split()
         if len(parts) >= 2:
             frame_num = int(parts[0])
-            phase_idx = int(parts[1])
+            label = parts[1]
+            if label.lstrip("-").isdigit():
+                phase_idx = int(label)
+            else:
+                phase_idx = PHASE_NAME_TO_IDX.get(label, 0)
             phase_map[frame_num] = phase_idx
     return phase_map
 
@@ -194,33 +221,63 @@ class Cholec80VideoDataset(Dataset):
         video_name = f"video{video_id:02d}"
         video_dir = os.path.join(data_dir, video_name)
 
-        # Annotation files sit next to or inside the video folder
-        # Support both layouts: data_dir/videoXX-phase.txt and
-        # data_dir/videoXX/video_XX-phase.txt
-        phase_path = os.path.join(data_dir, f"{video_name}-phase.txt")
-        tool_path = os.path.join(data_dir, f"{video_name}-tool.txt")
-        if not os.path.exists(phase_path):
-            phase_path = os.path.join(video_dir, f"{video_name}-phase.txt")
-            tool_path = os.path.join(video_dir, f"{video_name}-tool.txt")
+        # ── Locate annotation files ──────────────────────────────────────
+        # Search order (most-to-least specific):
+        #   1. data_dir/phase_annotations/videoXX-phase.txt  (downloaded layout)
+        #   2. data_dir/videoXX-phase.txt                    (flat cholec80 layout)
+        #   3. data_dir/videoXX/videoXX-phase.txt            (per-video folder)
+        _phase_candidates = [
+            os.path.join(data_dir, "phase_annotations", f"{video_name}-phase.txt"),
+            os.path.join(data_dir, f"{video_name}-phase.txt"),
+            os.path.join(video_dir, f"{video_name}-phase.txt"),
+        ]
+        _tool_candidates = [
+            os.path.join(data_dir, "tool_annotations", f"{video_name}-tool.txt"),
+            os.path.join(data_dir, f"{video_name}-tool.txt"),
+            os.path.join(video_dir, f"{video_name}-tool.txt"),
+        ]
+        phase_path = next((p for p in _phase_candidates if os.path.exists(p)), _phase_candidates[0])
+        tool_path = next((p for p in _tool_candidates if os.path.exists(p)), _tool_candidates[0])
+
         self.phase_labels = parse_phase_annotations(phase_path)
         self.tool_labels = parse_tool_annotations(tool_path)
 
-        # Cholec80 ships frames pre-extracted at 1 fps, so we load ALL
-        # frames in the folder (no subsampling needed).  Each frame file
-        # is named by its original 25-fps frame number (e.g., 000000.png,
-        # 000025.png, 000050.png …).  We simply take every file that has
-        # a matching annotation entry.
+        # ── Locate video frames ──────────────────────────────────────────
+        # Prefer pre-extracted PNG/JPG frames in a per-video folder; fall
+        # back to reading directly from an MP4 file.
+        #
+        # Frame numbers follow the original 25-fps numbering.  Tool
+        # annotations are already at 1 fps (every 25th frame: 0, 25, 50 …),
+        # so we use their keys as the canonical 1-fps frame list and look up
+        # the matching phase label at the same frame number.
         all_frames = sorted(glob.glob(os.path.join(video_dir, "*.png")))
-        # Also try .jpg in case the dataset ships jpeg frames
-        if len(all_frames) == 0:
+        if not all_frames:
             all_frames = sorted(glob.glob(os.path.join(video_dir, "*.jpg")))
 
-        self.frames = []
-        for frame_path in all_frames:
-            fname = os.path.basename(frame_path)
-            frame_num = int(os.path.splitext(fname)[0])
-            if frame_num in self.phase_labels:
-                self.frames.append((frame_path, frame_num))
+        self.mp4_path = None
+        if all_frames:
+            # Pre-extracted frames: keep only those with annotation entries.
+            self.frames = []
+            for frame_path in all_frames:
+                fname = os.path.basename(frame_path)
+                frame_num = int(os.path.splitext(fname)[0])
+                if frame_num in self.phase_labels:
+                    self.frames.append((frame_path, frame_num))
+        else:
+            # MP4 fall-back: search common locations.
+            _mp4_candidates = [
+                os.path.join(data_dir, "videos", f"{video_name}.mp4"),
+                os.path.join(data_dir, f"{video_name}.mp4"),
+            ]
+            self.mp4_path = next(
+                (p for p in _mp4_candidates if os.path.exists(p)), None
+            )
+            # Use the tool annotation keys as the 1-fps frame list (they are
+            # already spaced every 25 frames in 25-fps numbering).
+            frame_nums = sorted(
+                fn for fn in self.tool_labels if fn in self.phase_labels
+            )
+            self.frames = [(None, fn) for fn in frame_nums]
 
     def __len__(self):
         return len(self.frames)
@@ -228,7 +285,20 @@ class Cholec80VideoDataset(Dataset):
     def __getitem__(self, idx):
         frame_path, frame_num = self.frames[idx]
 
-        img = cv2.imread(frame_path)
+        if self.mp4_path is not None:
+            # Read the frame directly from the MP4. A new VideoCapture is
+            # opened per call so this is safe with DataLoader multiprocessing.
+            cap = cv2.VideoCapture(self.mp4_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, img = cap.read()
+            cap.release()
+            if not ret or img is None:
+                img = np.zeros((224, 224, 3), dtype=np.uint8)
+        else:
+            img = cv2.imread(frame_path)
+            if img is None:
+                img = np.zeros((224, 224, 3), dtype=np.uint8)
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         if self.transform:
