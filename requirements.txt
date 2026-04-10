@@ -1,9 +1,1 @@
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.24.0
-opencv-python>=4.7.0
-scikit-learn>=1.2.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
-pyyaml>=6.0
-tqdm>=4.65.0
+dG9yY2g+PTIuMC4wCnRvcmNodmlzaW9uPj0wLjE1LjAKbnVtcHk+PTEuMjQuMApvcGVuY3YtcHl0aG9uPj00LjcuMApzY2lraXQtbGVhcm4+PTEuMi4wCm1hdHBsb3RsaWI+PTMuNy4wCnNlYWJvcm4+PTAuMTIuMApweXlhbWw+PTYuMAp0cWRtPj00LjY1LjAKbm90ZWJvb2s+PTcuMC4wCg==
