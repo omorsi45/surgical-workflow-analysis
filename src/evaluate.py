@@ -38,7 +38,10 @@ def compute_phase_f1(predictions, targets, num_classes=7):
     """
     preds_np = predictions.numpy().astype(int)
     targets_np = targets.numpy().astype(int)
-    return f1_score(targets_np, preds_np, average="macro", zero_division=0)
+    return f1_score(
+        targets_np, preds_np, average="macro",
+        labels=list(range(num_classes)), zero_division=0
+    )
 
 
 def compute_per_phase_f1(predictions, targets, num_classes=7):
@@ -372,7 +375,7 @@ def plot_timeline_ribbon(predictions, targets, phase_names, video_name="",
         >>> fig = plot_timeline_ribbon(preds, targets, ["P1"]*7, "Video 41")
     """
     fig, axes = plt.subplots(2, 1, figsize=(16, 3), sharex=True)
-    cmap = plt.cm.get_cmap("tab10", len(phase_names))
+    cmap = plt.colormaps["tab10"]
 
     for ax, data, label in zip(axes, [targets, predictions],
                                 ["Ground Truth", "Prediction"]):
