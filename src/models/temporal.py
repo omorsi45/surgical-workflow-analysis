@@ -111,7 +111,7 @@ class LSTMModel(nn.Module):
             torch.Tensor: Hidden representations, shape (B, T, hidden_dim).
         """
         if mask is not None:
-            lengths = mask.sum(dim=1).cpu()
+            lengths = mask.sum(dim=1).cpu().clamp(min=1)
             packed = nn.utils.rnn.pack_padded_sequence(
                 x, lengths, batch_first=True, enforce_sorted=False
             )
