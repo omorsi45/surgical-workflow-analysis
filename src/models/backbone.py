@@ -94,8 +94,11 @@ class ResNet50FeatureExtractor(nn.Module):
         """
         self.eval()
         self.to(device)
+        # Workers > 0 require CUDA context to be initialized first; fall back
+        # to 0 on CPU-only machines to avoid multiprocessing overhead.
+        nw = 0 if (device == "cpu" or not torch.cuda.is_available()) else 2
         loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=2
+            dataset, batch_size=batch_size, shuffle=False, num_workers=nw
         )
 
         all_features = []
