@@ -110,8 +110,9 @@ class Trainer:
             nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
             self.optimizer.step()
 
+            batch_n = features.shape[0]
             for key in meters:
-                meters[key].update(loss_dict.get(key, 0.0))
+                meters[key].update(loss_dict.get(key, 0.0), n=batch_n)
 
         return {k: m.avg for k, m in meters.items()}
 
@@ -144,8 +145,9 @@ class Trainer:
                 phase_logits, tool_logits, phases, tools, mask
             )
 
+            batch_n = features.shape[0]
             for key in meters:
-                meters[key].update(loss_dict.get(key, 0.0))
+                meters[key].update(loss_dict.get(key, 0.0), n=batch_n)
 
             # Collect predictions for metrics (only valid frames)
             for b in range(features.shape[0]):
