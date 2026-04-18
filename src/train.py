@@ -68,6 +68,9 @@ class Trainer:
             self.optimizer, T_0=config["training"]["scheduler_T0"]
         )
 
+        # Mixed precision training
+        self.scaler = torch.amp.GradScaler("cuda", enabled=(device != "cpu"))
+
         # Early stopping state
         self.best_val_f1 = 0.0
         self.patience_counter = 0
@@ -101,14 +104,17 @@ class Trainer:
 
             self.optimizer.zero_grad()
 
-            phase_logits, tool_logits = self.model(features, mask)
-            loss, loss_dict = self.loss_fn(
-                phase_logits, tool_logits, phases, tools, mask
-            )
+            with torch.amp.autocast("cuda", enabled=(self.device != "cpu")):
+                phase_logits, tool_logits = self.model(features, mask)
+                loss, loss_dict = self.loss_fn(
+                    phase_logits, tool_logits, phases, tools, mask
+                )
 
-            loss.backward()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
             batch_n = features.shape[0]
             for key in meters:
