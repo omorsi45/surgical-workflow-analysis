@@ -57,7 +57,7 @@ class Trainer:
         os.makedirs(save_dir, exist_ok=True)
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=config["training"]["learning_rate"],
             weight_decay=config["training"]["weight_decay"],
