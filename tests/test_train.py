@@ -36,3 +36,9 @@ def test_trainer_uses_adamw():
     assert isinstance(trainer.optimizer, torch.optim.AdamW), (
         f"Expected AdamW, got {type(trainer.optimizer)}"
     )
+
+
+def test_trainer_has_grad_scaler():
+    trainer = _make_minimal_trainer()
+    assert hasattr(trainer, "scaler"), "Trainer must have a GradScaler for AMP"
+    assert isinstance(trainer.scaler, torch.amp.GradScaler)
