@@ -34,6 +34,7 @@ def test_corr_loss_tool_gradients_nonzero():
 
 def test_corr_loss_mask_respected():
     """Loss with mask should differ from loss without."""
+    torch.manual_seed(0)
     loss_fn = _make_loss()
     phase_logits = torch.randn(2, 20, 7)
     tool_logits = torch.randn(2, 20, 7)
