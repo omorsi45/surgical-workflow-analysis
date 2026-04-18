@@ -148,12 +148,12 @@ class CorrelationLoss(nn.Module):
         Returns:
             torch.Tensor: Scalar correlation loss.
         """
-        # Get predicted phases (argmax) and tool probabilities (sigmoid)
-        pred_phases = phase_logits.argmax(dim=-1)  # (B, T)
-        tool_probs = torch.sigmoid(tool_logits)     # (B, T, num_tools)
+        # Soft phase assignment — differentiable w.r.t. phase_logits
+        phase_probs = torch.softmax(phase_logits, dim=-1)       # (B, T, num_phases)
+        tool_probs = torch.sigmoid(tool_logits)                  # (B, T, num_tools)
 
-        # Look up prior probabilities for predicted phases
-        prior_probs = self.cooccur[pred_phases]  # (B, T, num_tools)
+        # Expected prior: weighted average of co-occurrence rows
+        prior_probs = phase_probs @ self.cooccur                 # (B, T, num_tools)
 
         # Penalty: high tool prob where prior is low
         penalty = tool_probs * (1.0 - prior_probs)
