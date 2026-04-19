@@ -57,7 +57,7 @@ class Trainer:
         os.makedirs(save_dir, exist_ok=True)
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=config["training"]["learning_rate"],
             weight_decay=config["training"]["weight_decay"],
@@ -67,6 +67,9 @@ class Trainer:
         self.scheduler = CosineAnnealingWarmRestarts(
             self.optimizer, T_0=config["training"]["scheduler_T0"]
         )
+
+        # Mixed precision training
+        self.scaler = torch.amp.GradScaler("cuda", enabled=(device != "cpu"))
 
         # Early stopping state
         self.best_val_f1 = 0.0
@@ -101,17 +104,21 @@ class Trainer:
 
             self.optimizer.zero_grad()
 
-            phase_logits, tool_logits = self.model(features, mask)
-            loss, loss_dict = self.loss_fn(
-                phase_logits, tool_logits, phases, tools, mask
-            )
+            with torch.amp.autocast("cuda", enabled=(self.device != "cpu")):
+                phase_logits, tool_logits = self.model(features, mask)
+                loss, loss_dict = self.loss_fn(
+                    phase_logits, tool_logits, phases, tools, mask
+                )
 
-            loss.backward()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
+            batch_n = features.shape[0]
             for key in meters:
-                meters[key].update(loss_dict.get(key, 0.0))
+                meters[key].update(loss_dict.get(key, 0.0), n=batch_n)
 
         return {k: m.avg for k, m in meters.items()}
 
@@ -144,8 +151,9 @@ class Trainer:
                 phase_logits, tool_logits, phases, tools, mask
             )
 
+            batch_n = features.shape[0]
             for key in meters:
-                meters[key].update(loss_dict.get(key, 0.0))
+                meters[key].update(loss_dict.get(key, 0.0), n=batch_n)
 
             # Collect predictions for metrics (only valid frames)
             for b in range(features.shape[0]):

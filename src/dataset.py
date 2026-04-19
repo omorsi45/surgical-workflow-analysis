@@ -255,6 +255,7 @@ class Cholec80VideoDataset(Dataset):
             all_frames = sorted(glob.glob(os.path.join(video_dir, "*.jpg")))
 
         self.mp4_path = None
+        self._frame_cache = {}
         if all_frames:
             # Pre-extracted frames: keep only those with annotation entries.
             self.frames = []
@@ -278,6 +279,15 @@ class Cholec80VideoDataset(Dataset):
                 fn for fn in self.tool_labels if fn in self.phase_labels
             )
             self.frames = [(None, fn) for fn in frame_nums]
+            # Pre-read all frames once to avoid re-opening VideoCapture per __getitem__
+            self._frame_cache = {}
+            if self.mp4_path is not None:
+                cap = cv2.VideoCapture(self.mp4_path)
+                for fn in frame_nums:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, fn)
+                    ret, img = cap.read()
+                    self._frame_cache[fn] = img if ret else None
+                cap.release()
 
     def __len__(self):
         return len(self.frames)
@@ -286,13 +296,8 @@ class Cholec80VideoDataset(Dataset):
         frame_path, frame_num = self.frames[idx]
 
         if self.mp4_path is not None:
-            # Read the frame directly from the MP4. A new VideoCapture is
-            # opened per call so this is safe with DataLoader multiprocessing.
-            cap = cv2.VideoCapture(self.mp4_path)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-            ret, img = cap.read()
-            cap.release()
-            if not ret or img is None:
+            img = self._frame_cache.get(frame_num)
+            if img is None:
                 img = np.zeros((224, 224, 3), dtype=np.uint8)
         else:
             img = cv2.imread(frame_path)
