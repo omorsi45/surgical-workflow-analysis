@@ -7,13 +7,12 @@ data:
   num_tools: 7
   fps: 1
   frame_size: 224
-  # Videos 15, 20, 30, 32, 33, 48, 49, 52, 56 excluded (MP4 unavailable)
-  train_videos: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16,
-                 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31]
-  val_videos: [34, 35, 36, 37, 38, 39, 40]
-  test_videos: [41, 42, 43, 44, 45, 46, 47, 50, 51, 53, 54, 55,
-                57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-                73, 74, 75, 76, 77, 78, 79, 80]
+  # Compute-constrained subset (17 videos) used for final experiments on free-tier
+  # Colab. Full-scale split would be 40/40 as in Twinanda et al. (2016); the code,
+  # losses, and evaluation pipeline are identical at either scale.
+  train_videos: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  val_videos: [11, 12]
+  test_videos: [13, 14, 16, 17, 18]
   phase_names:
     - "Preparation"
     - "Calot Triangle Dissection"
