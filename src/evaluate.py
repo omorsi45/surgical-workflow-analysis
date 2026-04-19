@@ -86,16 +86,7 @@ def compute_tool_map(predictions, targets):
         >>> mAP = compute_tool_map(preds, targets)
         >>> print(f"{mAP:.4f}")
     """
-    preds_np = predictions.numpy()
-    targets_np = targets.numpy()
-    aps = []
-    for i in range(targets_np.shape[1]):
-        if targets_np[:, i].sum() > 0:
-            ap = average_precision_score(targets_np[:, i], preds_np[:, i])
-            aps.append(ap)
-        else:
-            aps.append(0.0)
-    return np.mean(aps)
+    return float(compute_per_tool_ap(predictions, targets).mean())
 
 
 def compute_per_tool_ap(predictions, targets):
