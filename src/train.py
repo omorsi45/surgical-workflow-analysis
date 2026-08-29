@@ -247,4 +247,28 @@ class Trainer:
                           f"(no improvement for {self.patience} epochs)")
                     break
 
+        self.load_best_checkpoint()
         return self.history
+
+    def load_best_checkpoint(self):
+        """Restore the best-validation-F1 weights into ``self.model``.
+
+        Called automatically at the end of :meth:`train`. Without this the
+        model left in memory is the *last* epoch's, which — after early
+        stopping — is ``patience`` epochs past the checkpoint that was
+        selected on validation F1. Test metrics must be computed from the
+        selected model, not the last one.
+
+        Returns:
+            bool: True if a checkpoint was found and loaded, False otherwise.
+        """
+        ckpt_path = os.path.join(self.save_dir, "best_model.pt")
+        if not os.path.exists(ckpt_path):
+            print("  No checkpoint found — keeping last-epoch weights.")
+            return False
+
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(ckpt["model_state_dict"])
+        print(f"  Restored best checkpoint from epoch {ckpt['epoch']} "
+              f"(val F1={ckpt['best_val_f1']:.4f})")
+        return True

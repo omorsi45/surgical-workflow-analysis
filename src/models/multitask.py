@@ -62,7 +62,8 @@ class MultiTaskModel(nn.Module):
         return phase_logits, tool_logits
 
 
-def build_cooccurrence_matrix(features_dir, video_ids, num_phases=7, num_tools=7):
+def build_cooccurrence_matrix(features_dir, video_ids, num_phases=7, num_tools=7,
+                              smoothing=0.0):
     """Build a tool-phase co-occurrence probability matrix from training data.
 
     Counts how often each tool appears during each phase across the training
@@ -73,6 +74,13 @@ def build_cooccurrence_matrix(features_dir, video_ids, num_phases=7, num_tools=7
         video_ids (list): List of training video IDs.
         num_phases (int): Number of surgical phases. Default: 7.
         num_tools (int): Number of surgical tools. Default: 7.
+        smoothing (float): Laplace (additive) smoothing constant applied to
+            the presence counts. With ``smoothing=0.0`` (default) a tool that
+            never co-occurs with a phase in the training videos gets exactly
+            P = 0, and CorrelationLoss then applies its maximum penalty to
+            that pair — hard-coding training-set rarity as an impossibility.
+            A small positive value (e.g. 1.0) keeps every entry strictly
+            between 0 and 1. Default: 0.0.
 
     Returns:
         torch.Tensor: Co-occurrence probability matrix of shape
@@ -83,6 +91,9 @@ def build_cooccurrence_matrix(features_dir, video_ids, num_phases=7, num_tools=7
         >>> print(cooccur.shape)
         torch.Size([7, 7])
         >>> print(cooccur[0])  # Tool probabilities during Preparation phase
+        >>> # Smoothed variant has no exact zeros:
+        >>> smoothed = build_cooccurrence_matrix("data/features", [1, 2, 3],
+        ...                                      smoothing=1.0)
     """
     counts = torch.zeros(num_phases, num_tools)
     phase_counts = torch.zeros(num_phases)
@@ -99,7 +110,11 @@ def build_cooccurrence_matrix(features_dir, video_ids, num_phases=7, num_tools=7
             phase_counts[p] += mask.sum()
             counts[p] += tools[mask].sum(dim=0)
 
-    # Normalize: P(tool | phase)
+    # Normalize: P(tool | phase). Each tool is an independent Bernoulli given
+    # the phase, so additive smoothing adds `smoothing` to the presence count
+    # and 2 * `smoothing` to the trial count (present + absent).
+    counts = counts + smoothing
+    phase_counts = phase_counts + 2.0 * smoothing
     phase_counts = phase_counts.clamp(min=1)
     cooccur = counts / phase_counts.unsqueeze(1)
     return cooccur
@@ -160,7 +175,12 @@ class CorrelationLoss(nn.Module):
 
         if mask is not None:
             penalty = penalty * mask.unsqueeze(-1).float()
-            return penalty.sum() / mask.sum().clamp(min=1)
+            # Divide by the number of valid *elements* (frames x tools), not
+            # frames alone, so the masked and unmasked paths return the same
+            # scale. Dividing by mask.sum() alone inflates the loss by a
+            # factor of num_tools and silently rescales lambda_corr.
+            num_valid = mask.sum().clamp(min=1) * penalty.shape[-1]
+            return penalty.sum() / num_valid
 
         return penalty.mean()
 
@@ -236,7 +256,11 @@ class MultiTaskLoss(nn.Module):
         tool_loss_raw = self.tool_criterion(tool_logits, tool_targets)
         if mask is not None:
             tool_loss_raw = tool_loss_raw * mask.unsqueeze(-1).float()
-            tool_loss = tool_loss_raw.sum() / mask.sum().clamp(min=1)
+            # Normalize by valid elements (frames x tools) so this matches the
+            # unmasked .mean() scale; dividing by mask.sum() alone made the
+            # effective lambda_tool num_tools times larger than configured.
+            num_valid = mask.sum().clamp(min=1) * tool_loss_raw.shape[-1]
+            tool_loss = tool_loss_raw.sum() / num_valid
         else:
             tool_loss = tool_loss_raw.mean()
 
