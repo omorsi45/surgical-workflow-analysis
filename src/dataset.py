@@ -89,8 +89,15 @@ def parse_phase_annotations(annotation_path):
             label = parts[1]
             if label.lstrip("-").isdigit():
                 phase_idx = int(label)
+            elif label in PHASE_NAME_TO_IDX:
+                phase_idx = PHASE_NAME_TO_IDX[label]
             else:
-                phase_idx = PHASE_NAME_TO_IDX.get(label, 0)
+                # Silently mapping an unrecognized name to 0 would relabel
+                # those frames as "Preparation" and corrupt the metrics.
+                raise ValueError(
+                    f"Unrecognized phase label {label!r} in {annotation_path}. "
+                    f"Expected one of {sorted(PHASE_NAME_TO_IDX)} or an integer."
+                )
             phase_map[frame_num] = phase_idx
     return phase_map
 
@@ -196,8 +203,14 @@ class Cholec80VideoDataset(Dataset):
     Args:
         data_dir (str): Root directory of the Cholec80 dataset.
         video_id (int): Video number (1-80).
-        fps (int): Frames per second to subsample to. Default: 1.
+        fps (int): Target sampling rate. Only ``1`` is supported when reading
+            from an MP4, because Cholec80 tool annotations exist only at 1 fps;
+            any other value raises. Ignored when reading a folder of
+            pre-extracted frames, where the folder contents set the rate.
+            Default: 1.
         transform (callable, optional): Transform to apply to each frame.
+        frame_size (int): Size that cached MP4 frames are downscaled to.
+            Should match the transform's resize. Default: 224.
 
     Attributes:
         frames (list): List of (frame_path, frame_number) tuples.
@@ -212,11 +225,13 @@ class Cholec80VideoDataset(Dataset):
         torch.Size([3, 224, 224]) 0 torch.Size([7])
     """
 
-    def __init__(self, data_dir, video_id, fps=1, transform=None):
+    def __init__(self, data_dir, video_id, fps=1, transform=None,
+                 frame_size=224):
         self.data_dir = data_dir
         self.video_id = video_id
         self.fps = fps
         self.transform = transform
+        self.frame_size = frame_size
 
         video_name = f"video{video_id:02d}"
         video_dir = os.path.join(data_dir, video_name)
@@ -278,15 +293,35 @@ class Cholec80VideoDataset(Dataset):
             frame_nums = sorted(
                 fn for fn in self.tool_labels if fn in self.phase_labels
             )
+            # Cholec80 tool annotations are spaced every 25 source frames,
+            # i.e. exactly 1 fps, so they are the finest grid available here.
+            if self.fps != 1:
+                raise ValueError(
+                    f"fps={self.fps} is not supported for the MP4 path: tool "
+                    "annotations exist only at 1 fps. Extract frames yourself "
+                    "and point the dataset at a per-video frame folder to use "
+                    "a different rate."
+                )
             self.frames = [(None, fn) for fn in frame_nums]
-            # Pre-read all frames once to avoid re-opening VideoCapture per __getitem__
+            # Pre-read all frames once to avoid re-opening VideoCapture per
+            # __getitem__. Frames are downscaled to `frame_size` before being
+            # cached: the transform resizes to that size anyway, and caching
+            # at full HD would cost ~3 GB of RAM for a 45-minute video
+            # (2700 frames x 854x480x3 bytes) and OOM a Colab runtime.
             self._frame_cache = {}
             if self.mp4_path is not None:
                 cap = cv2.VideoCapture(self.mp4_path)
                 for fn in frame_nums:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, fn)
                     ret, img = cap.read()
-                    self._frame_cache[fn] = img if ret else None
+                    if ret and img is not None:
+                        img = cv2.resize(
+                            img, (self.frame_size, self.frame_size),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                        self._frame_cache[fn] = img
+                    else:
+                        self._frame_cache[fn] = None
                 cap.release()
 
     def __len__(self):

@@ -10,6 +10,7 @@ Author: Omar Morsi (40236376)
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import seaborn as sns
 from sklearn.metrics import (
     f1_score,
@@ -73,12 +74,18 @@ def compute_per_phase_f1(predictions, targets, num_classes=7):
 def compute_tool_map(predictions, targets):
     """Compute mean Average Precision (mAP) for tool detection.
 
+    Tools with no positive examples in ``targets`` are excluded from the
+    mean: average precision is undefined for a class that never occurs, and
+    scoring it as 0.0 would penalize the model for a tool it was never
+    evaluated on.
+
     Args:
         predictions (torch.Tensor): Predicted tool probabilities, shape (N, 7).
         targets (torch.Tensor): Ground truth binary tool labels, shape (N, 7).
 
     Returns:
-        float: Mean Average Precision across all tools.
+        float: Mean Average Precision over the tools that are present.
+            Returns 0.0 if no tool has any positive example.
 
     Example:
         >>> preds = torch.rand(100, 7)
@@ -86,7 +93,11 @@ def compute_tool_map(predictions, targets):
         >>> mAP = compute_tool_map(preds, targets)
         >>> print(f"{mAP:.4f}")
     """
-    return float(compute_per_tool_ap(predictions, targets).mean())
+    aps = compute_per_tool_ap(predictions, targets)
+    present = ~np.isnan(aps)
+    if not present.any():
+        return 0.0
+    return float(aps[present].mean())
 
 
 def compute_per_tool_ap(predictions, targets):
@@ -97,7 +108,10 @@ def compute_per_tool_ap(predictions, targets):
         targets (torch.Tensor): Ground truth binary tool labels, shape (N, 7).
 
     Returns:
-        np.ndarray: Average precision for each tool, shape (7,).
+        np.ndarray: Average precision for each tool, shape (7,). A tool with
+            no positive example in ``targets`` gets ``np.nan`` rather than
+            0.0, since AP is undefined for an absent class. Use
+            ``np.nanmean`` (or :func:`compute_tool_map`) to aggregate.
 
     Example:
         >>> preds = torch.rand(100, 7)
@@ -113,7 +127,7 @@ def compute_per_tool_ap(predictions, targets):
         if targets_np[:, i].sum() > 0:
             aps.append(average_precision_score(targets_np[:, i], preds_np[:, i]))
         else:
-            aps.append(0.0)
+            aps.append(np.nan)
     return np.array(aps)
 
 
@@ -330,12 +344,17 @@ def plot_per_class_metrics(phase_f1s, tool_aps, phase_names, tool_names,
         ax1.text(v + 0.01, i, f"{v:.3f}", va="center")
 
     colors_tool = sns.color_palette("magma", len(tool_names))
-    ax2.barh(tool_names, tool_aps, color=colors_tool)
+    # Tools absent from the split have AP = nan (undefined). Draw them as a
+    # zero-length bar labelled "n/a" rather than letting nan blank the axis.
+    tool_aps = np.asarray(tool_aps, dtype=float)
+    absent = np.isnan(tool_aps)
+    ax2.barh(tool_names, np.where(absent, 0.0, tool_aps), color=colors_tool)
     ax2.set_xlabel("Average Precision")
     ax2.set_title("Per-Tool Average Precision")
     ax2.set_xlim(0, 1)
     for i, v in enumerate(tool_aps):
-        ax2.text(v + 0.01, i, f"{v:.3f}", va="center")
+        label = "n/a (absent)" if np.isnan(v) else f"{v:.3f}"
+        ax2.text((0.0 if np.isnan(v) else v) + 0.01, i, label, va="center")
 
     plt.tight_layout()
     if save_path:
@@ -366,22 +385,30 @@ def plot_timeline_ribbon(predictions, targets, phase_names, video_name="",
         >>> fig = plot_timeline_ribbon(preds, targets, ["P1"]*7, "Video 41")
     """
     fig, axes = plt.subplots(2, 1, figsize=(16, 3), sharex=True)
-    cmap = plt.colormaps["tab10"]
+
+    # Build a discrete colormap with exactly one entry per phase. Passing a
+    # continuous colormap with vmin/vmax instead would quantize phase i to
+    # colormap slot int(i / (n - 1) * N), so the legend patches (drawn from
+    # slots 0..n-1) would not match the colors actually drawn in the ribbon.
+    n_phases = len(phase_names)
+    phase_colors = [plt.colormaps["tab10"](i) for i in range(n_phases)]
+    cmap = mcolors.ListedColormap(phase_colors)
+    norm = mcolors.BoundaryNorm(np.arange(n_phases + 1) - 0.5, n_phases)
 
     for ax, data, label in zip(axes, [targets, predictions],
                                 ["Ground Truth", "Prediction"]):
         data_np = data.numpy().reshape(1, -1)
-        ax.imshow(data_np, aspect="auto", cmap=cmap, vmin=0,
-                  vmax=len(phase_names) - 1, interpolation="nearest")
+        ax.imshow(data_np, aspect="auto", cmap=cmap, norm=norm,
+                  interpolation="nearest")
         ax.set_ylabel(label, fontsize=10)
         ax.set_yticks([])
 
     axes[1].set_xlabel("Time (frames at 1 fps)")
     fig.suptitle(f"Phase Timeline -- {video_name}", fontsize=12)
 
-    # Add colorbar legend
+    # Legend patches reuse the exact same colors as the ribbon.
     import matplotlib.patches as mpatches
-    patches = [mpatches.Patch(color=cmap(i), label=name)
+    patches = [mpatches.Patch(color=phase_colors[i], label=name)
                for i, name in enumerate(phase_names)]
     fig.legend(handles=patches, loc="center right", fontsize=8,
                bbox_to_anchor=(1.15, 0.5))

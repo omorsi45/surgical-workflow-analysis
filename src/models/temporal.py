@@ -128,8 +128,21 @@ class LSTMModel(nn.Module):
 class DilatedConvBlock(nn.Module):
     """Single dilated convolution block used within a TCN stage.
 
-    Applies a 1D dilated causal convolution followed by ReLU and dropout.
-    Includes a residual connection from input to output.
+    Applies a 1D dilated convolution followed by BatchNorm, ReLU and dropout,
+    with a residual connection from input to output.
+
+    The convolution is **acausal**: ``padding=dilation`` with ``kernel_size=3``
+    centers the kernel, so the output at time t depends on t-dilation through
+    t+dilation. This matches the offline MS-TCN formulation and is appropriate
+    for post-operative video analysis, but it means the model cannot be used
+    for real-time intra-operative inference without switching to causal
+    (left-only) padding.
+
+    Note:
+        ``BatchNorm1d`` normalizes over the batch *and* time axes, including
+        any padded timesteps, which the mask does not exclude inside a stage.
+        This is harmless at ``batch_size=1`` (no padding exists) but will skew
+        the statistics for batches of variable-length videos.
 
     Args:
         channels (int): Number of input and output channels.
@@ -214,10 +227,19 @@ class TCNStage(nn.Module):
 class MultiStageTCN(nn.Module):
     """Multi-Stage Temporal Convolutional Network (MS-TCN).
 
-    Chains multiple TCN stages where each stage refines the predictions
-    of the previous one. The first stage takes raw features; subsequent
-    stages take the output of the prior stage. Inspired by the TeCNO
-    architecture (Czempiel et al., 2020).
+    Chains multiple TCN stages: the first takes raw ResNet features and each
+    subsequent stage refines the *hidden features* of the prior stage.
+    Inspired by the TeCNO architecture (Czempiel et al., 2020).
+
+    Note:
+        This is a simplified MS-TCN. In Farha & Gall (2019) each stage emits
+        class predictions that the next stage consumes, and every stage
+        receives its own loss (deep supervision). Here the stages pass
+        ``channels``-wide feature maps forward and only the final stage output
+        is supervised, through the heads in
+        :class:`~src.models.multitask.MultiTaskModel`. Removing per-stage
+        supervision is a plausible reason this variant underperforms the
+        published MS-TCN results, alongside training-set size.
 
     Args:
         feature_dim (int): Input feature dimension. Default: 2048.
